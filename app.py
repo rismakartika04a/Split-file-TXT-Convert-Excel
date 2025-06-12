@@ -173,13 +173,31 @@ with tempfile.TemporaryDirectory() as tmpdirname:
         with open(excel_path,"rb") as fexcel:
             st.download_button("📥 Download File Excel (.xlsx)", fexcel, "hasil_split_gaji_karyawan.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # ==== PREVIEW SHEET ====
+    # ==== PREVIEW SHEET + DOWNLOAD TIAP SHEET ====
     for sheet_name, df in preview_dfs:
         with st.expander(f"🔍 Preview Sheet '{sheet_name}'"):
             if df.empty:
                 st.write("_Sheet kosong_")
             else:
                 st.dataframe(df, use_container_width=True)
+                # === Tambahan tombol download sheet ini sebagai Excel ===
+                single_excel_path = os.path.join(tmpdirname, f"{sheet_name}.xlsx")
+                with pd.ExcelWriter(single_excel_path, engine="xlsxwriter") as single_writer:
+                    df.to_excel(single_writer, index=False, sheet_name=sheet_name)
+                    wb = single_writer.book
+                    ws = single_writer.sheets[sheet_name]
+                    fmt_text = wb.add_format({"num_format": "@"})
+                    for i, c in enumerate(df.columns):
+                        if i==0: ws.set_column(i,i,12,fmt_text)
+                        elif i==1: ws.set_column(i,i,22,fmt_text)
+                        else: ws.set_column(i,i,16,fmt_text)
+                with open(single_excel_path, "rb") as single_excel_file:
+                    st.download_button(
+                        label=f"⬇️ Download Sheet '{sheet_name}' (.xlsx)",
+                        data=single_excel_file,
+                        file_name=f"{sheet_name}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
     # Preview isi file txt mentah (optional, bisa di bawah)
     for fn_txt, fp_txt, content in filepaths:
