@@ -46,7 +46,7 @@ else:
 
 with tempfile.TemporaryDirectory() as tmpdirname:
     # ZIP & Excel writer
-    zip_path = os.path.join(tmpdirname, "split_files.zip")
+    zip_path = os.path.join(tmpdirname, "hasil_split_gaji_karyawan_txt.zip")
     zipf = zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED)
     excel_path = os.path.join(tmpdirname, "hasil_split_gaji_karyawan.xlsx")
     writer = pd.ExcelWriter(excel_path, engine="xlsxwriter")
@@ -181,23 +181,35 @@ with tempfile.TemporaryDirectory() as tmpdirname:
     writer.close()
     zipf.close()
 
-    # ==== TOMBOL DOWNLOAD DITARUH DI ATAS ====
+    # ==== TOMBOL DOWNLOAD UTAMA (pakai nama default, tanpa rename) ====
     col1, col2 = st.columns(2)
     with col1:
-        with open(zip_path,"rb") as fzip:
-            st.download_button("📦 Download Semua File TXT (.zip)", fzip, "hasil_split_gaji_karyawan_txt.zip","application/zip")
-    with col2:
         with open(excel_path,"rb") as fexcel:
-            st.download_button("📥 Download File Excel (.xlsx)", fexcel, "hasil_split_gaji_karyawan.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "📥 Download File Excel (.xlsx)",
+                fexcel,
+                file_name="hasil_split_gaji_karyawan.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+    with col2:
+        with open(zip_path,"rb") as fzip:
+            st.download_button(
+                "📦 Download Semua File TXT (.zip)",
+                fzip,
+                file_name="hasil_split_gaji_karyawan_txt.zip",
+                mime="application/zip"
+            )
 
-    # ==== PREVIEW SHEET + DOWNLOAD TIAP SHEET ====
+    # ==== PREVIEW SHEET + DOWNLOAD TIAP SHEET (ADA INPUT RENAME) ====
     for sheet_name, df in preview_dfs:
         with st.expander(f"🔍 Preview Sheet '{sheet_name}'"):
             if df.empty:
                 st.write("_Sheet kosong_")
             else:
                 st.dataframe(df, use_container_width=True)
-                # === Tambahan tombol download sheet ini sebagai Excel ===
+                single_excel_name = st.text_input(
+                    f"Nama file untuk sheet '{sheet_name}' (.xlsx)", value=f"{sheet_name}.xlsx", key=f"fname_{sheet_name}"
+                )
                 single_excel_path = os.path.join(tmpdirname, f"{sheet_name}.xlsx")
                 with pd.ExcelWriter(single_excel_path, engine="xlsxwriter") as single_writer:
                     df.to_excel(single_writer, index=False, sheet_name=sheet_name)
@@ -212,7 +224,7 @@ with tempfile.TemporaryDirectory() as tmpdirname:
                     st.download_button(
                         label=f"⬇️ Download Sheet '{sheet_name}' (.xlsx)",
                         data=single_excel_file,
-                        file_name=f"{sheet_name}.xlsx",
+                        file_name=single_excel_name,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
