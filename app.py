@@ -127,23 +127,40 @@ with tempfile.TemporaryDirectory() as tmpdirname:
             else:
                 df = pd.DataFrame(parsed, columns=columns)
 
-                # Hapus baris jika kolom NIK kosong/None/NIK
-                if not df.empty:
-                    nik_col = [c for c in df.columns if c.strip().upper() == 'NIK']
-                    if nik_col:
-                        nik_col = nik_col[0]
-                        df = df[~df[nik_col].isin(["", None, "None", "nan", "NIK"])].copy()
-                        df.reset_index(drop=True, inplace=True)
-                    # Hapus baris yang seluruh kolomnya kosong
-                    df = df[~(df.isnull() | (df == '')).all(axis=1)].copy()
+                # FILTER DATA: hanya baris yang punya NIK, Nama, dan data lain yang terisi
+                nik_col = [c for c in df.columns if c.strip().upper() == 'NIK']
+                nama_col = [c for c in df.columns if c.strip().upper() == 'NAMA']
+                if nik_col and nama_col:
+                    nik_col = nik_col[0]
+                    nama_col = nama_col[0]
+                    
+                    # -------- PATCH BARU: Ambil NIK & Ekstra Kode (angka setelah spasi) --------
+                    nik_asli = df[nik_col].astype(str)
+                    # NIK (tanpa kode)
+                    df[nik_col] = nik_asli.str.extract(r"^([A-Za-z0-9]+)")
+                    # Kode = angka/kode setelah spasi
+                    df['Kode'] = nik_asli.str.extract(r"^[A-Za-z0-9]+\s+(\d+)")
+                    df['Kode'] = df['Kode'].fillna("")
+                    df[nama_col] = df[nama_col].astype(str).str.strip()
+
+                    # Hanya baris valid
+                    df = df[
+                        df[nik_col].notna() &
+                        (df[nik_col].astype(str).str.strip() != "") &
+                        (df[nik_col].astype(str).str.upper() != "NIK") &
+                        (df[nama_col].astype(str).str.strip() != "") &
+                        (df[nama_col].astype(str).str.upper() != "NAMA") &
+                        (df.drop([nik_col, nama_col], axis=1).apply(lambda row: any([str(x).strip() != "" for x in row]), axis=1))
+                    ].copy()
                     df.reset_index(drop=True, inplace=True)
 
-                # Split kolom NIK+Nama jadi dua
-                if ("Nik" in df.columns or "NIK" in df.columns) and ("Nama" in df.columns or "NAMA" in df.columns):
-                    cnik = [c for c in df.columns if c.strip().upper()=="NIK"][0]
-                    cnama = [c for c in df.columns if c.strip().upper()=="NAMA"][0]
-                    df[cnik] = df[cnik].astype(str).str.extract(r"^([A-Za-z0-9]+)")
-                    df[cnama] = df[cnama].astype(str).str.strip()
+                    # --- Susun ulang kolom agar Kode setelah NIK ---
+                    cols = df.columns.tolist()
+                    if 'Kode' in cols and nik_col in cols:
+                        nik_idx = cols.index(nik_col)
+                        cols.remove('Kode')
+                        cols.insert(nik_idx+1, 'Kode')
+                        df = df[cols]
                 # Hapus kolom COL, COL_2 dst jika ada
                 df = df[[c for c in df.columns if not c.startswith("COL")]]
 
