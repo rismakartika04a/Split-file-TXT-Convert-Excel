@@ -4,23 +4,22 @@ import os
 import tempfile
 import zipfile
 import pandas as pd
+import numpy as np
 
 st.set_page_config(layout="wide")
 st.title("Split file TXT & Convert ➔ Excel")
 
-# 1) Upload file
 uploaded_file = st.file_uploader("Upload file TXT", type=None)
 if uploaded_file is None:
     st.info("Silakan upload file TXT...")
     st.stop()
 
-# 2) Pilih header pemisah (optional)
 split_header = st.selectbox(
     "Pilih header pemisah halaman (opsional):",
     ["", "GAJI KARYAWAN TETAP", "GAJI KARYAWAN KONTRAK"]
 )
 
-# 3) Baca isi file (UTF-8/Latin-1 fallback)
+# --- Baca isi file
 try:
     try:
         raw_text = uploaded_file.read().decode("utf-8")
@@ -31,7 +30,7 @@ except Exception as e:
     st.error(f"Gagal membaca file: {e}")
     st.stop()
 
-# 4) Split berdasarkan header jika ada
+# --- Split berdasarkan header
 if not split_header:
     sections = [raw_text]
     st.info("Tidak ada header dipilih → 1 section saja.")
@@ -44,8 +43,23 @@ else:
     else:
         st.success(f"Ditemukan {len(sections)} section berdasarkan header.")
 
+# Format preview angka Indonesia
+def format_id(x):
+    if pd.isna(x) or x == "":
+        return ""
+    try:
+        return "{:,.0f}".format(float(x)).replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return x
+
+def get_preview_df(df):
+    df_preview = df.copy()
+    for col in df_preview.columns:
+        if pd.api.types.is_numeric_dtype(df_preview[col]):
+            df_preview[col] = df_preview[col].apply(format_id)
+    return df_preview
+
 with tempfile.TemporaryDirectory() as tmpdirname:
-    # ZIP & Excel writer
     zip_path = os.path.join(tmpdirname, "hasil_split_gaji_karyawan_txt.zip")
     zipf = zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED)
     excel_path = os.path.join(tmpdirname, "hasil_split_gaji_karyawan.xlsx")
@@ -67,7 +81,6 @@ with tempfile.TemporaryDirectory() as tmpdirname:
             st.warning(f"Section #{idx}: Tidak ada data (delimiter ³).")
             df = pd.DataFrame()
         else:
-            # --- Cari header ASCII --- #
             header_idx = None
             for i, ln in enumerate(lines):
                 if "NIK" in ln.upper() and "NAMA" in ln.upper():
@@ -76,7 +89,6 @@ with tempfile.TemporaryDirectory() as tmpdirname:
             if header_idx is None:
                 header_idx = 0
 
-            # --- Ambil 2 baris header (biarkan header ASCII tidak ikut)
             header1 = lines[header_idx].replace("Â", "").replace("Ã", "").replace("°", "")
             header2 = ""
             if header_idx+1 < len(lines):
@@ -121,29 +133,20 @@ with tempfile.TemporaryDirectory() as tmpdirname:
                     parts = parts[:n_cols]
                 parsed.append(parts)
 
-            # --- PATCH: Clean baris & kolom COL --- #
             if not parsed:
                 df = pd.DataFrame(columns=columns)
             else:
                 df = pd.DataFrame(parsed, columns=columns)
-
-                # FILTER DATA: hanya baris yang punya NIK, Nama, dan data lain yang terisi
                 nik_col = [c for c in df.columns if c.strip().upper() == 'NIK']
                 nama_col = [c for c in df.columns if c.strip().upper() == 'NAMA']
                 if nik_col and nama_col:
                     nik_col = nik_col[0]
                     nama_col = nama_col[0]
-                    
-                    # -------- PATCH BARU: Ambil NIK & Ekstra Kode (angka setelah spasi) --------
                     nik_asli = df[nik_col].astype(str)
-                    # NIK (tanpa kode)
                     df[nik_col] = nik_asli.str.extract(r"^([A-Za-z0-9]+)")
-                    # Kode = angka/kode setelah spasi
                     df['Kode'] = nik_asli.str.extract(r"^[A-Za-z0-9]+\s+(\d+)")
                     df['Kode'] = df['Kode'].fillna("")
                     df[nama_col] = df[nama_col].astype(str).str.strip()
-
-                    # Hanya baris valid
                     df = df[
                         df[nik_col].notna() &
                         (df[nik_col].astype(str).str.strip() != "") &
@@ -153,7 +156,6 @@ with tempfile.TemporaryDirectory() as tmpdirname:
                         (df.drop([nik_col, nama_col], axis=1).apply(lambda row: any([str(x).strip() != "" for x in row]), axis=1))
                     ].copy()
                     df.reset_index(drop=True, inplace=True)
-
                     # --- Susun ulang kolom agar Kode setelah NIK ---
                     cols = df.columns.tolist()
                     if 'Kode' in cols and nik_col in cols:
@@ -164,24 +166,41 @@ with tempfile.TemporaryDirectory() as tmpdirname:
                 # Hapus kolom COL, COL_2 dst jika ada
                 df = df[[c for c in df.columns if not c.startswith("COL")]]
 
-        # Simpan ke Excel (sheet Page_{idx})
+                # PATCH: Convert kolom angka
+                def is_number_col(series):
+                    cleaned = series.astype(str).str.replace(",", "").str.replace(" ", "").str.replace("-", "").replace("", np.nan)
+                    cleaned = cleaned[~cleaned.isna()]
+                    def isfloat(x):
+                        try:
+                            float(x)
+                            return True
+                        except Exception:
+                            return False
+                    return len(cleaned) > 0 and all(isfloat(x) for x in cleaned)
+                for col in df.columns:
+                    if col.strip().lower() in ["nik", "kode", "nama"]:
+                        continue
+                    if is_number_col(df[col]):
+                        df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", "").str.replace(" ", "").str.replace("-", ""), errors="coerce")
+
         sheet_name = f"Page_{idx}" if len(f"Page_{idx}")<=31 else f"Pg_{idx}"
         df.to_excel(writer, sheet_name=sheet_name, index=False)
         preview_dfs.append((sheet_name, df))
 
-        # Format kolom: semua ke text biar tidak ada “angka diubah Excel”
+        # Format kolom di Excel: numerik dengan #,##0
         wb = writer.book
         ws = writer.sheets[sheet_name]
         fmt_text = wb.add_format({"num_format":"@"})
         for i, c in enumerate(df.columns):
-            if i==0: ws.set_column(i,i,12,fmt_text)
-            elif i==1: ws.set_column(i,i,22,fmt_text)
-            else: ws.set_column(i,i,16,fmt_text)
+            if c.strip().lower() in ["nik", "kode", "nama"]:
+                ws.set_column(i,i,16,fmt_text)
+            else:
+                ws.set_column(i,i,16, wb.add_format({'num_format': '#,##0'}))
 
     writer.close()
     zipf.close()
 
-    # ==== TOMBOL DOWNLOAD UTAMA (pakai nama default, tanpa rename) ====
+    # Download utama Excel dan ZIP
     col1, col2 = st.columns(2)
     with col1:
         with open(excel_path,"rb") as fexcel:
@@ -200,13 +219,15 @@ with tempfile.TemporaryDirectory() as tmpdirname:
                 mime="application/zip"
             )
 
-    # ==== PREVIEW SHEET + DOWNLOAD TIAP SHEET (ADA INPUT RENAME) ====
+    # Preview Sheet
     for sheet_name, df in preview_dfs:
         with st.expander(f"🔍 Preview Sheet '{sheet_name}'"):
             if df.empty:
                 st.write("_Sheet kosong_")
             else:
-                st.dataframe(df, use_container_width=True)
+                df_preview = get_preview_df(df)
+                st.dataframe(df_preview, use_container_width=True)
+                # Download per sheet
                 single_excel_name = st.text_input(
                     f"Nama file untuk sheet '{sheet_name}' (.xlsx)", value=f"{sheet_name}.xlsx", key=f"fname_{sheet_name}"
                 )
@@ -217,9 +238,10 @@ with tempfile.TemporaryDirectory() as tmpdirname:
                     ws = single_writer.sheets[sheet_name]
                     fmt_text = wb.add_format({"num_format": "@"})
                     for i, c in enumerate(df.columns):
-                        if i==0: ws.set_column(i,i,12,fmt_text)
-                        elif i==1: ws.set_column(i,i,22,fmt_text)
-                        else: ws.set_column(i,i,16,fmt_text)
+                        if c.strip().lower() in ["nik", "kode", "nama"]:
+                            ws.set_column(i,i,16,fmt_text)
+                        else:
+                            ws.set_column(i,i,16, wb.add_format({'num_format': '#,##0'}))
                 with open(single_excel_path, "rb") as single_excel_file:
                     st.download_button(
                         label=f"⬇️ Download Sheet '{sheet_name}' (.xlsx)",
@@ -228,7 +250,7 @@ with tempfile.TemporaryDirectory() as tmpdirname:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-    # Preview isi file txt mentah (optional, bisa di bawah)
+    # Preview isi file txt mentah
     for fn_txt, fp_txt, content in filepaths:
         with st.expander(f"📄 Preview {fn_txt}"):
             preview = "\n".join(content.splitlines()[:20])
